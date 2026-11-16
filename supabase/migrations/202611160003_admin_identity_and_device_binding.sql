@@ -45,8 +45,10 @@ select u.id, left(coalesce(u.raw_user_meta_data->>'username', split_part(u.email
 from auth.users u join auth.identities i on i.user_id = u.id and i.provider = 'discord'
 on conflict (id) do update set discord_id = excluded.discord_id, discord_username = excluded.discord_username,
  role = case when exists(select 1 from public.admin_allowlist a where a.discord_id = excluded.discord_id) then 'admin'::public.app_role else public.profiles.role end;
- update public.profiles p set role = 'admin'
+update public.profiles p set role = 'admin'
  where p.discord_id in (select a.discord_id from public.admin_allowlist a);
+update public.profiles p set role = 'user'
+ where p.role = 'admin' and not exists(select 1 from public.admin_allowlist a where a.discord_id = p.discord_id);
 
 create function public.is_staff() returns boolean
 language sql stable security definer set search_path = '' as $$
@@ -133,23 +135,6 @@ end
 $$;
 revoke all on function public.get_discord_admin_allowlist() from public, anon;
 grant execute on function public.get_discord_admin_allowlist() to authenticated;
-
-create function public.apply_discord_admin_allowlist() returns trigger language plpgsql security definer set search_path = '' as $$
-begin
- if tg_op = 'DELETE' then
-  update public.profiles set role = 'user' where discord_id = old.discord_id and role = 'admin';
- else
-  if exists(select 1 from public.admin_allowlist a where a.discord_id = new.discord_id) then
-   update public.profiles set role = 'admin' where discord_id = new.discord_id;
-  else
-   update public.profiles set role = 'user' where discord_id = new.discord_id and role = 'admin';
-  end if;
- end if;
- return null;
-end
-$$;
-create trigger admin_allowlist_apply after insert or update or delete on public.admin_allowlist
-for each row execute function public.apply_discord_admin_allowlist();
 
 create or replace function public.dashboard_summary() returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare uid uuid := auth.uid(); role_value public.app_role;
