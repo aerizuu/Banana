@@ -28,24 +28,29 @@ export default function App() {
   const [mobileOpen, setMobileOpen] = useState(false)
   useEffect(() => {
     if (!supabase) { setSession(false); return }
-    const oauthError = new URLSearchParams(location.search).get('error')
-    if (oauthError) { window.history.replaceState({}, '', location.pathname); setSession(false); return }
-    if (location.hash.includes('access_token=')) {
-      const tokens = new URLSearchParams(location.hash.slice(1))
-      window.history.replaceState({}, '', location.pathname)
-      void supabase.auth.setSession({ access_token: tokens.get('access_token')!, refresh_token: tokens.get('refresh_token')! }).then(({ data, error }) => {
-        if (error) { setSession(false); return }
-        setSession(true); if (data.user) void loadProfile(data.user.id)
-      })
-      return
-    }
-    void supabase.auth.getSession().then(({ data }) => { setSession(!!data.session); if (data.session) void loadProfile(data.session.user.id) })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, current) => { setSession(!!current); if (current) void loadProfile(current.user.id); else setProfile(null) })
-    return () => subscription.unsubscribe()
+    let alive = true
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, current) => {
+      if (!alive) return
+      setSession(!!current)
+      if (current) void loadProfile(current.user.id)
+      else setProfile(null)
+    })
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (!alive) return
+      if (error) { setSession(false); return }
+      setSession(!!data.session)
+      if (data.session) void loadProfile(data.session.user.id)
+    })
+    return () => { alive = false; subscription.unsubscribe() }
   }, [])
   async function loadProfile(id: string) {
-    const { data } = await supabase!.from('profiles').select('username,role,discord_id,preferred_theme').eq('id', id).single()
+    const { data } = await supabase!.from('profiles').select('username,role,discord_id,preferred_theme').eq('id', id).maybeSingle()
     if (data) { const value = data as Profile; setProfile(value); setTheme(value.preferred_theme) }
+    else {
+      await supabase!.rpc('ensure_my_profile')
+      const { data: created } = await supabase!.from('profiles').select('username,role,discord_id,preferred_theme').eq('id', id).maybeSingle()
+      if (created) { const value = created as Profile; setProfile(value); setTheme(value.preferred_theme) }
+    }
   }
   if (session === null) return <main className="loading">Restoring your session…</main>
   if (!supabase) return <main className="setup"><Brand /><h1>Connect your Supabase project</h1><p>Add your project URL and publishable key to <code>.env</code>. Apply the included migration before signing in.</p><code>VITE_SUPABASE_URL<br />VITE_SUPABASE_ANON_KEY</code></main>
