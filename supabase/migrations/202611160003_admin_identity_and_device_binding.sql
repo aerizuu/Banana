@@ -2,6 +2,12 @@ alter table public.keys add column if not exists device_hash text;
 alter table public.keys add column if not exists device_bound_at timestamptz;
 alter table public.keys add constraint key_device_hash_shape check (device_hash is null or device_hash ~ '^[0-9a-f]{64}$');
 create index if not exists keys_device_hash_idx on public.keys(device_hash) where device_hash is not null;
+alter table public.keys drop constraint if exists key_assignment_matches_status;
+alter table public.keys add constraint key_assignment_matches_status check (
+ (status = 'available' and assigned_to is null and redeemed_at is null)
+ or (status in ('redeemed', 'expired') and assigned_to is not null and redeemed_at is not null)
+ or status = 'revoked'
+);
 
 create table public.admin_allowlist (
  discord_id text primary key check (discord_id ~ '^[0-9]{15,22}$'),
@@ -70,6 +76,8 @@ create policy "staff read generated keys" on public.keys for select to authentic
 using (generated_by = (select auth.uid()) and public.is_staff());
 create policy "admins read assigned keys" on public.keys for select to authenticated
 using (assigned_to = (select auth.uid()) and (select role from public.profiles where id = (select auth.uid())) = 'admin');
+create policy "admins read all keys" on public.keys for select to authenticated
+using ((select role from public.profiles where id = (select auth.uid())) = 'admin');
 
 create or replace function public.generate_key(p_duration public.key_duration) returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -120,7 +128,7 @@ declare uid uuid := auth.uid();
 begin
  if uid is null or not public.is_staff() then raise exception 'not_authorized' using errcode = '42501'; end if;
  update public.keys set device_hash = null, device_bound_at = null
- where id = p_key_id and ((select role from public.profiles where id = uid) = 'admin' or generated_by = uid);
+ where id = p_key_id and ((select role from public.profiles where id = uid) = 'admin' or (generated_by = uid and assigned_to is not null));
  if not found then raise exception 'key_unavailable'; end if;
  insert into public.audit_logs(actor_id, action, target_id, metadata) values(uid, 'key.device_reset', p_key_id, '{}'::jsonb);
 end
@@ -150,4 +158,4 @@ $$;
 
 revoke all on function public.bind_key_device(uuid, text), public.reset_key_device(uuid) from public, anon;
 grant execute on function public.bind_key_device(uuid, text), public.reset_key_device(uuid) to authenticated;
-revoke all on function public.create_profile(), public.sync_discord_identity(), public.apply_discord_admin_allowlist() from public, anon, authenticated;
+revoke all on function public.create_profile(), public.sync_discord_identity() from public, anon, authenticated;
