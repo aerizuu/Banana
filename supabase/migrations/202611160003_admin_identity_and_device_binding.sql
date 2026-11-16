@@ -15,21 +15,11 @@ declare requested_name text; discord_identity text;
 begin
  requested_name := coalesce(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1));
  discord_identity := coalesce(new.raw_user_meta_data->>'provider_id', new.raw_user_meta_data->>'sub');
- insert into public.profiles(id, username, discord_id, discord_username)
- values (new.id, left(requested_name, 32), discord_identity, new.raw_user_meta_data->>'full_name');
+ insert into public.profiles(id, username)
+ values (new.id, left(requested_name, 32));
  return new;
 end
 $$;
-
-create function public.sync_discord_admin_role() returns trigger
-language plpgsql security definer set search_path = '' as $$
-begin
- if new.discord_id is not null and exists (select 1 from public.admin_allowlist where discord_id = new.discord_id) then new.role := 'admin'; end if;
- return new;
-end
-$$;
-create trigger profile_discord_admin_role before insert or update of discord_id on public.profiles
-for each row execute function public.sync_discord_admin_role();
 
 create function public.sync_discord_identity() returns trigger language plpgsql security definer set search_path = '' as $$
 declare discord_name text;
@@ -37,12 +27,26 @@ begin
  if new.provider = 'discord' then
   discord_name := coalesce(new.identity_data->>'preferred_username', new.identity_data->>'username');
   update public.profiles set discord_id = new.provider_id, discord_username = discord_name, updated_at = now() where id = new.user_id;
+  if exists(select 1 from public.admin_allowlist a where a.discord_id = new.provider_id) then
+   update public.profiles set role = 'admin' where id = new.user_id;
+  end if;
  end if;
  return new;
 end
 $$;
+revoke all on function public.sync_discord_identity() from public, anon, authenticated;
 create trigger discord_identity_linked after insert on auth.identities
 for each row execute function public.sync_discord_identity();
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created after insert on auth.users for each row execute function public.create_profile();
+insert into public.profiles(id, username, discord_id, discord_username)
+select u.id, left(coalesce(u.raw_user_meta_data->>'username', split_part(u.email, '@', 1)), 32), i.provider_id,
+       coalesce(i.identity_data->>'preferred_username', i.identity_data->>'username')
+from auth.users u join auth.identities i on i.user_id = u.id and i.provider = 'discord'
+on conflict (id) do update set discord_id = excluded.discord_id, discord_username = excluded.discord_username,
+ role = case when exists(select 1 from public.admin_allowlist a where a.discord_id = excluded.discord_id) then 'admin'::public.app_role else public.profiles.role end;
+ update public.profiles p set role = 'admin'
+ where p.discord_id in (select a.discord_id from public.admin_allowlist a);
 
 create function public.is_staff() returns boolean
 language sql stable security definer set search_path = '' as $$
@@ -52,20 +56,18 @@ revoke all on function public.is_staff() from public;
 grant execute on function public.is_staff() to authenticated;
 
 drop policy if exists "profile theme update self" on public.profiles;
-create policy "profile update self without privilege changes" on public.profiles for update to authenticated
-using (id = (select auth.uid()))
-with check (
- id = (select auth.uid())
- and role = (select p.role from public.profiles p where p.id = (select auth.uid()))
- and preferred_theme is distinct from (select p.preferred_theme from public.profiles p where p.id = (select auth.uid()))
+create policy "profile update appearance self" on public.profiles for update to authenticated using (id = (select auth.uid())) with check (
+ id = (select auth.uid()) and role = (select p.role from public.profiles p where p.id = (select auth.uid()))
  and username = (select p.username from public.profiles p where p.id = (select auth.uid()))
  and discord_id is not distinct from (select p.discord_id from public.profiles p where p.id = (select auth.uid()))
  and discord_username is not distinct from (select p.discord_username from public.profiles p where p.id = (select auth.uid()))
  and discord_avatar is not distinct from (select p.discord_avatar from public.profiles p where p.id = (select auth.uid()))
 );
 drop policy if exists "developers read generated keys" on public.keys;
-create policy "staff read managed keys" on public.keys for select to authenticated
-using (public.is_staff() and (generated_by = (select auth.uid()) or (select role from public.profiles where id = (select auth.uid())) = 'admin'));
+create policy "staff read generated keys" on public.keys for select to authenticated
+using (generated_by = (select auth.uid()) and public.is_staff());
+create policy "admins read assigned keys" on public.keys for select to authenticated
+using (assigned_to = (select auth.uid()) and (select role from public.profiles where id = (select auth.uid())) = 'admin');
 
 create or replace function public.generate_key(p_duration public.key_duration) returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -122,34 +124,32 @@ begin
 end
 $$;
 
-create function public.admin_set_discord_id(p_user_id uuid, p_discord_id text, p_discord_username text default null) returns void
-language plpgsql security definer set search_path = '' as $$
-declare uid uuid := auth.uid();
+create function public.get_discord_admin_allowlist() returns table(discord_id text)
+language plpgsql stable security definer set search_path = '' as $$
 begin
- if uid is null or (select role from public.profiles where id = uid) <> 'admin' then raise exception 'not_authorized' using errcode = '42501'; end if;
- if p_discord_id !~ '^[0-9]{15,22}$' then raise exception 'invalid_discord_id'; end if;
- update public.profiles set discord_id = p_discord_id, discord_username = p_discord_username, updated_at = now() where id = p_user_id;
- if not found then raise exception 'profile_not_found'; end if;
- insert into public.audit_logs(actor_id, action, target_id, metadata) values(uid, 'account.discord_linked', p_user_id, jsonb_build_object('discord_id', p_discord_id));
+ if not exists(select 1 from public.profiles where id = auth.uid() and role = 'admin') then raise exception 'not_authorized' using errcode = '42501'; end if;
+ return query select a.discord_id from public.admin_allowlist a order by a.created_at;
 end
 $$;
-revoke all on function public.admin_set_discord_id(uuid, text, text) from public, anon;
-grant execute on function public.admin_set_discord_id(uuid, text, text) to authenticated;
+revoke all on function public.get_discord_admin_allowlist() from public, anon;
+grant execute on function public.get_discord_admin_allowlist() to authenticated;
 
-create function public.set_discord_admin_allowlist(p_ids text[]) returns void
-language plpgsql security definer set search_path = '' as $$
-declare uid uuid := auth.uid();
+create function public.apply_discord_admin_allowlist() returns trigger language plpgsql security definer set search_path = '' as $$
 begin
- if uid is null or (select role from public.profiles where id = uid) <> 'admin' then raise exception 'not_authorized' using errcode = '42501'; end if;
- if exists(select 1 from unnest(p_ids) x where x !~ '^[0-9]{15,22}$') then raise exception 'invalid_discord_id'; end if;
- delete from public.admin_allowlist where discord_id <> all(p_ids);
- insert into public.admin_allowlist(discord_id) select distinct unnest(p_ids) on conflict do nothing;
- update public.profiles set role = 'user' where role = 'admin' and (discord_id is null or not exists(select 1 from public.admin_allowlist a where a.discord_id = profiles.discord_id));
- update public.profiles set role = 'admin' where discord_id in (select discord_id from public.admin_allowlist);
+ if tg_op = 'DELETE' then
+  update public.profiles set role = 'user' where discord_id = old.discord_id and role = 'admin';
+ else
+  if exists(select 1 from public.admin_allowlist a where a.discord_id = new.discord_id) then
+   update public.profiles set role = 'admin' where discord_id = new.discord_id;
+  else
+   update public.profiles set role = 'user' where discord_id = new.discord_id and role = 'admin';
+  end if;
+ end if;
+ return null;
 end
 $$;
-revoke all on function public.set_discord_admin_allowlist(text[]) from public, anon;
-grant execute on function public.set_discord_admin_allowlist(text[]) to authenticated;
+create trigger admin_allowlist_apply after insert or update or delete on public.admin_allowlist
+for each row execute function public.apply_discord_admin_allowlist();
 
 create or replace function public.dashboard_summary() returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare uid uuid := auth.uid(); role_value public.app_role;
@@ -165,3 +165,4 @@ $$;
 
 revoke all on function public.bind_key_device(uuid, text), public.reset_key_device(uuid) from public, anon;
 grant execute on function public.bind_key_device(uuid, text), public.reset_key_device(uuid) to authenticated;
+revoke all on function public.create_profile(), public.sync_discord_identity(), public.apply_discord_admin_allowlist() from public, anon, authenticated;

@@ -65,17 +65,18 @@ function Brand() { return <Link className="brand" to="/"><span className="brand-
 function NavLink({ to, icon, label, close }: { to: string; icon: ReactNode; label: string; close: () => void }) { return <Link className="nav-item" to={to} onClick={close}>{icon}<span>{label}</span></Link> }
 function Login() {
   const [username, setUsername] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [show, setShow] = useState(false)
-  async function submit(event: FormEvent) { event.preventDefault(); setError(''); setBusy(true); const { data, error: authError } = await supabase!.functions.invoke('username-login', { body: { username, password } }); if (authError || !data?.session) setError('Sign-in failed. Check your details or contact your administrator.'); else { const { error: sessionError } = await supabase!.auth.setSession(data.session); if (sessionError) setError('Could not establish your session. Please try again.') } setBusy(false) }
+  async function submit(event: FormEvent) { event.preventDefault(); setError(''); setBusy(true); try { const { data, error: authError } = await supabase!.functions.invoke('username-login', { body: { username, password } }); if (authError || !data?.session) setError('Sign-in failed. Check your details or contact your administrator.'); else { const { error: sessionError } = await supabase!.auth.setSession(data.session); if (sessionError) setError('Could not establish your session. Please try again.') } } catch { setError('Sign-in service unavailable. Please try again.') } finally { setBusy(false) } }
   async function discord() { setError(''); setBusy(true); const { error } = await supabase!.auth.signInWithOAuth({ provider: 'discord', options: { redirectTo: `${location.origin}/` } }); if (error) { setError('Discord sign-in failed. Check Discord provider settings in Supabase.'); setBusy(false) } }
   return <main className="login-page"><section className="login-panel"><Brand /><p className="overline">ACCESS PORTAL</p><h1>Sign in to your workspace.</h1><p className="muted">Manage keys issued through Banana Hub.</p><form onSubmit={submit}><label htmlFor="username">Username</label><input id="username" autoComplete="username" required value={username} onChange={e => setUsername(e.target.value)} /><label htmlFor="password">Password</label><div className="password-field"><input id="password" type={show ? 'text' : 'password'} autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /><button type="button" className="text-button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button></div>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button></form><div className="divider"><span>OR</span></div><button className="secondary-button full" disabled={busy} onClick={() => void discord()}>{busy ? 'Connecting…' : 'Continue with Discord'}</button><p className="login-note">Accounts are provisioned by your administrator.</p></section></main>
 }
 function PageTitle({ kicker, title, detail }: { kicker: string; title: string; detail: string }) { return <div className="page-title"><p className="overline">{kicker}</p><h1>{title}</h1><p className="muted">{detail}</p></div> }
 function useKeys(profile: Profile | null) {
   return useQuery({ queryKey: ['keys', profile?.role], enabled: !!profile && !!supabase, queryFn: async (): Promise<KeyRow[]> => {
-    const column = profile?.role === 'user' ? 'assigned_to' : 'generated_by'
+  const column = profile?.role === 'user' ? 'assigned_to' : 'generated_by'
     const { data: user } = await supabase!.auth.getUser(); if (!user.user) throw new Error('Session expired')
     let query = supabase!.from('keys').select('id,duration,status,created_at,expires_at,key_prefix,assigned_to,device_bound_at').order('created_at', { ascending: false }).limit(50)
-    if (profile?.role !== 'admin') query = query.eq(column, user.user.id)
+    if (profile?.role === 'admin') query = query.or(`generated_by.eq.${user.user.id},assigned_to.eq.${user.user.id}`)
+    else query = query.eq(column, user.user.id)
     const { data, error } = await query
     if (error) throw error
     return data as KeyRow[]
@@ -84,10 +85,25 @@ function useKeys(profile: Profile | null) {
 function KeyRows({ profile }: { profile: Profile | null }) {
   const { data, isLoading, error } = useKeys(profile)
   const queryClient = useQueryClient()
+  const [blocked, setBlocked] = useState<string[]>([])
+  useEffect(() => {
+    if (profile?.role !== 'user' || !data?.length) return
+    let cancelled = false
+    void deviceHash().then(async hash => {
+      const active = data.filter(row => row.status === 'redeemed' && (!row.expires_at || new Date(row.expires_at) > new Date()))
+      const results = await Promise.all(active.map(async row => {
+        if (!row.device_bound_at) { await supabase!.rpc('bind_key_device', { p_key_id: row.id, p_device_hash: hash }); return { row, error: null } }
+        const { error } = await supabase!.rpc('bind_key_device', { p_key_id: row.id, p_device_hash: hash })
+        return { row, error }
+      }))
+      if (!cancelled) setBlocked(results.filter(item => item.error?.message.includes('device_mismatch')).map(item => item.row.id))
+    })
+    return () => { cancelled = true }
+  }, [data, profile?.role])
   if (isLoading) return <p className="state">Loading key activity…</p>
   if (error) return <p className="state error">Could not load keys. Refresh the page to try again.</p>
   if (!data?.length) return <div className="empty"><KeyRound /><p>No keys to show yet.</p><span>Keys associated with your account will appear here.</span></div>
-  return <ul className="key-list">{data.map(row => <li key={row.id}><span className="key-id">{row.key_prefix}••••</span><span>{row.duration}</span><span className={`status ${row.status}`}>{row.expires_at && new Date(row.expires_at) < new Date() && row.status !== 'revoked' ? 'expired' : row.status}</span><time>{new Date(row.created_at).toLocaleDateString()}</time>{profile?.role === 'user' && row.status === 'redeemed' && <button className="secondary-button" onClick={() => void bindDevice(row.id, () => queryClient.invalidateQueries({ queryKey: ['keys', profile.role] }))}>{row.device_bound_at ? 'Device bound' : 'Bind this device'}</button>}{profile?.role && profile.role !== 'user' && row.assigned_to && <button className="secondary-button" onClick={() => void resetDevice(row.id, () => queryClient.invalidateQueries({ queryKey: ['keys', profile.role] }))}>Reset device</button>}</li>)}</ul>
+  return <ul className="key-list">{data.map(row => <li key={row.id}><span className="key-id">{row.key_prefix}••••</span><span>{row.duration}</span><span className={`status ${row.status}`}>{row.expires_at && new Date(row.expires_at) < new Date() && row.status !== 'revoked' ? 'expired' : row.status}</span><time>{new Date(row.created_at).toLocaleDateString()}</time>{profile?.role === 'user' && row.status === 'redeemed' && <span className="muted">{blocked.includes(row.id) ? 'Device differs from bound browser' : row.device_bound_at ? 'Bound to this browser' : 'Binding this browser…'}</span>}{profile?.role && profile.role !== 'user' && row.assigned_to && <button className="secondary-button" onClick={() => void resetDevice(row.id, () => queryClient.invalidateQueries({ queryKey: ['keys', profile.role] }))}>Reset device</button>}</li>)}</ul>
 }
 async function deviceHash() {
   let id = localStorage.getItem('banana-install-id')
@@ -95,7 +111,6 @@ async function deviceHash() {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(id))
   return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
-async function bindDevice(id: string, refresh: () => unknown) { const { error } = await supabase!.rpc('bind_key_device', { p_key_id: id, p_device_hash: await deviceHash() }); if (error) window.alert(error.message.includes('device_mismatch') ? 'This key is already bound to another browser.' : 'Could not bind this device.'); else void refresh() }
 async function resetDevice(id: string, refresh: () => unknown) { if (!window.confirm('Reset this key device binding? The next use will bind to a new browser.')) return; const { error } = await supabase!.rpc('reset_key_device', { p_key_id: id }); if (error) window.alert('Could not reset device binding. Check your permissions.'); else void refresh() }
 function Dashboard({ profile }: { profile: Profile | null }) { return <><PageTitle kicker="OVERVIEW" title={`Welcome${profile?.username ? `, ${profile.username}` : ''}`} detail="A current view of your key activity." /><section className="data-section"><div className="section-heading"><h2>Key activity</h2></div><KeyRows profile={profile} /></section></> }
 function Keys({ profile }: { profile: Profile | null }) { return <><PageTitle kicker="KEYS" title="Key Manage" detail="Review keys assigned to your account or generated by you." /><section className="data-section"><KeyRows profile={profile} /></section></> }
@@ -104,10 +119,6 @@ function GetKey() { const [duration, setDuration] = useState<'24h' | '7d' | '30d
 function SettingsPage({ profile, theme, setTheme }: { profile: Profile | null; theme: Theme; setTheme: (value: Theme) => void }) { return <><PageTitle kicker="PREFERENCES" title="Settings" detail="Account details and appearance." /><section className="settings-block"><h2>Appearance</h2><p className="muted">Choose how Banana Hub looks.</p><div className="theme-options">{(['dark', 'light', 'system'] as const).map(item => <button key={item} className={theme === item ? 'selected' : ''} onClick={() => setTheme(item)}>{item === 'dark' ? <Moon /> : <Sun />}{item[0].toUpperCase() + item.slice(1)}</button>)}</div></section><section className="settings-block"><h2>Account</h2><dl><div><dt>Username</dt><dd>{profile?.username ?? 'Unavailable'}</dd></div><div><dt>Role</dt><dd>{profile?.role ?? 'Unavailable'}</dd></div><div><dt>Discord ID</dt><dd>{profile?.discord_id ?? 'Not linked'}</dd></div></dl><button className="secondary-button" onClick={() => void supabase!.auth.signOut()}>Sign out</button></section></> }
 
 function AdminSettings() {
-  const [ids, setIds] = useState('')
-  const [message, setMessage] = useState('')
-  const [busy, setBusy] = useState(false)
-  const { data, isLoading, error, refetch } = useQuery({ queryKey: ['admin-allowlist'], queryFn: async () => { const { data, error } = await supabase!.from('admin_allowlist').select('discord_id').order('created_at'); if (error) throw error; return data.map(row => row.discord_id) } })
-  async function save(event: FormEvent) { event.preventDefault(); const values = ids.split(/[\s,]+/).map(v => v.trim()).filter(Boolean); if (!values.length || values.some(v => !/^\d{15,22}$/.test(v))) { setMessage('Enter one or more numeric Discord IDs.'); return }; setBusy(true); const { error } = await supabase!.rpc('set_discord_admin_allowlist', { p_ids: values }); setMessage(error ? 'Could not update admin access.' : 'Admin access updated. Sign out and back in for role changes.'); if (!error) void refetch(); setBusy(false) }
-  return <><PageTitle kicker="ACCESS CONTROL" title="Admin configuration" detail="Admin IDs are stored in private database configuration, not public environment variables." /><section className="settings-block"><h2>Discord admin IDs</h2>{isLoading ? <p className="state">Loading admin list…</p> : error ? <p className="state error">Could not load admin list.</p> : <p className="muted">Current allowlist: {data?.length ? data.join(', ') : 'empty'}</p>}<form className="action-form" onSubmit={save}><label htmlFor="admin-ids">Numeric Discord user IDs, separated by commas</label><textarea id="admin-ids" rows={3} required value={ids} onChange={e => setIds(e.target.value)} placeholder="Discord user ID" /><button className="primary-button" disabled={busy}>{busy ? 'Saving…' : 'Save admin IDs'}</button>{message && <p className="state" role="status">{message}</p>}</form><p className="muted">Replacing the list changes admin roles. Keep at least one trusted ID.</p></section></>
+  const { data, isLoading, error } = useQuery({ queryKey: ['admin-allowlist'], queryFn: async (): Promise<string[]> => { const { data, error } = await supabase!.rpc('get_discord_admin_allowlist'); if (error) throw error; return (data as { discord_id: string }[]).map(row => row.discord_id) } })
+  return <><PageTitle kicker="ACCESS CONTROL" title="Admin configuration" detail="Admin IDs are configured privately in Supabase, never in browser environment variables." /><section className="settings-block"><h2>Discord admin IDs</h2>{isLoading ? <p className="state">Loading admin list…</p> : error ? <p className="state error">Could not load admin list.</p> : <ul className="admin-list">{data?.map(id => <li key={id}>{id}</li>)}</ul>}<p className="muted">Manage IDs using Supabase SQL Editor. Changes apply at next Discord sign-in.</p></section></>
 }
