@@ -291,6 +291,22 @@ export default function App() {
                     {profile?.role === 'admin' && (
                       <NavLink to="/admin" icon={<ShieldCheck />} label="Admin" collapsed={!isMobile && sidebarCollapsed} />
                     )}
+                    <a
+                      className={`nav-item ${!isMobile && sidebarCollapsed ? 'collapsed' : ''}`}
+                      href="https://discord.gg/WHevndyM2"
+                      target="_blank"
+                      rel="noreferrer"
+                      title={!isMobile && sidebarCollapsed ? 'Join Server' : undefined}
+                    >
+                      <span className="nav-icon"><DiscordIcon /></span>
+                      <AnimatePresence initial={false}>
+                        {(isMobile || !sidebarCollapsed) && (
+                          <motion.span className="nav-text" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+                            Join Server
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+                    </a>
                     <NavLink to="/settings" icon={<SettingsIcon />} label="Settings" collapsed={!isMobile && sidebarCollapsed} />
                     <button
                       className={`nav-item ${!isMobile && sidebarCollapsed ? 'collapsed' : ''}`}
@@ -1670,15 +1686,6 @@ function Pricing({ profile }: { profile: Profile | null }) {
           >
             <DiscordIcon />
             Message @aerizuu
-          </a>
-          <a
-            className="secondary-button discord-btn"
-            href="https://discord.gg/WHevndyM2"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <DiscordIcon />
-            Join Banana Hub server
           </a>
           {profile?.role === 'user' ? (
             <Link className="secondary-button" to="/redeem"><TicketCheck size={15} /> Redeem a key</Link>
