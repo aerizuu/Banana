@@ -40,7 +40,7 @@ import { supabase } from './lib/supabase'
 import bananaLogo from './Public/Bananalogo.png'
 
 type Theme = 'dark' | 'light'
-type Profile = { username: string; discord_username: string | null; role: 'user' | 'developer' | 'admin'; discord_id: string | null; preferred_theme: Theme }
+type Profile = { username: string; discord_username: string | null; role: 'user' | 'admin' | 'owner'; discord_id: string | null; preferred_theme: Theme }
 type KeyRow = { id: string; duration: string; status: string; created_at: string; redeemed_at: string | null; expires_at: string | null; key_prefix: string; assigned_to: string | null; device_bound_at: string | null; owner?: { username: string } | null }
 type Toast = { kind: 'success' | 'error'; text: string }
 
@@ -282,16 +282,17 @@ export default function App() {
                   <nav aria-label="Workspace" onClick={() => { if (isMobile) setMobileOpen(false) }}>
                     <NavLink to="/" icon={<LayoutDashboard />} label="Dashboard" collapsed={!isMobile && sidebarCollapsed} />
                     <NavLink to="/keys" icon={<KeyRound />} label="Key Manage" collapsed={!isMobile && sidebarCollapsed} />
-                    {profile?.role === 'user' ? (
+                    {(profile?.role === 'user' || profile?.role === 'owner') && (
                       <RedeemNav collapsed={!isMobile && sidebarCollapsed} />
-                    ) : profile?.role === 'developer' || profile?.role === 'admin' ? (
+                    )}
+                    {(profile?.role === 'admin' || profile?.role === 'owner') && (
                       <NavLink to="/get-key" icon={<TicketCheck />} label="Get Key" collapsed={!isMobile && sidebarCollapsed} />
-                    ) : null}
+                    )}
                     <NavLink to="/pricing" icon={<Tag />} label="Pricing" collapsed={!isMobile && sidebarCollapsed} />
                   </nav>
 
                   <div className="sidebar-bottom" onClick={() => { if (isMobile) setMobileOpen(false) }}>
-                    {profile?.role === 'admin' && (
+                    {profile?.role === 'owner' && (
                       <>
                         <NavLink to="/log-key" icon={<ScrollText />} label="Log Key" collapsed={!isMobile && sidebarCollapsed} />
                         <NavLink to="/admin" icon={<ShieldCheck />} label="Admin" collapsed={!isMobile && sidebarCollapsed} />
@@ -401,7 +402,7 @@ export default function App() {
                           <Route path="/keys" element={<Keys profile={profile} />} />
                           <Route
                             path="/redeem"
-                            element={profile?.role === 'user' ? <Redeem profile={profile} /> : <Navigate to="/" replace />}
+                            element={profile?.role === 'user' || profile?.role === 'owner' ? <Redeem profile={profile} /> : <Navigate to="/" replace />}
                           />
                           <Route path="/pricing" element={<Pricing profile={profile} />} />
                           <Route
@@ -414,11 +415,11 @@ export default function App() {
                           />
                           <Route
                             path="/admin"
-                            element={profile?.role === 'admin' ? <AdminSettings /> : <Navigate to="/" replace />}
+                            element={profile?.role === 'owner' ? <AdminSettings /> : <Navigate to="/" replace />}
                           />
                           <Route
                             path="/log-key"
-                            element={profile?.role === 'admin' ? <LogKey profile={profile} /> : <Navigate to="/" replace />}
+                            element={profile?.role === 'owner' ? <LogKey profile={profile} /> : <Navigate to="/" replace />}
                           />
                           <Route path="*" element={<Navigate to="/" replace />} />
                         </Routes>
@@ -524,14 +525,14 @@ function Login({ theme, setTheme }: { theme: Theme; setTheme: (value: Theme) => 
         if (sessionError) setError('Could not establish your session. Please try again.')
         return
       }
-      const targetEmail = cleanUser.includes('@') ? cleanUser : cleanUser === 'user' ? 'userdemo@bananahub.com' : `${cleanUser}@bananahub.local`
+      const targetEmail = cleanUser.includes('@') ? cleanUser : `${cleanUser}@bananahub.local`
       const { data: directData, error: directError } = await supabase!.auth.signInWithPassword({ email: targetEmail, password })
       if (directError || !directData.session) {
         setError('Sign-in failed. Check your details or contact your administrator.')
       }
     } catch {
       try {
-        const targetEmail = cleanUser.includes('@') ? cleanUser : cleanUser === 'user' ? 'userdemo@bananahub.com' : `${cleanUser}@bananahub.local`
+        const targetEmail = cleanUser.includes('@') ? cleanUser : `${cleanUser}@bananahub.local`
         const { data: directData, error: directError } = await supabase!.auth.signInWithPassword({ email: targetEmail, password })
         if (directError || !directData.session) {
           setError('Sign-in failed. Check your details or contact your administrator.')
@@ -668,7 +669,7 @@ function useKeys(profile: Profile | null, enabled = true) {
     enabled: enabled && !!profile && !!supabase,
     refetchInterval: 8000,
     queryFn: async (): Promise<KeyRow[]> => {
-      const column = profile?.role === 'developer' ? 'generated_by' : 'assigned_to'
+      const column = profile?.role === 'admin' ? 'generated_by' : 'assigned_to'
       const { data: user } = await supabase!.auth.getUser()
       if (!user.user) throw new Error('Session expired')
       const { data, error } = await supabase!
@@ -809,7 +810,7 @@ function KeyDetailModal({ row, profile, adminView = false, now, onClose, onReset
   const isBound = Boolean(row.device_bound_at)
   const isLifetime = row.duration === 'lifetime' || !row.expires_at
   const isExpired = Boolean(row.expires_at && new Date(row.expires_at).getTime() <= now)
-  const canReset = (adminView ? profile?.role === 'admin' : profile?.role === 'user') && row.status === 'redeemed' && !isExpired
+  const canReset = (adminView ? profile?.role === 'owner' : profile?.role === 'user' || profile?.role === 'owner') && row.status === 'redeemed' && !isExpired
   const savedKey = localStorage.getItem(`banana-redeemed-key:${row.id}`) || ''
   const remaining = !isLifetime && row.expires_at ? formatRemaining(row.expires_at, now) : null
   const urgent = Boolean(row.expires_at && new Date(row.expires_at).getTime() - now < 86400000 && new Date(row.expires_at).getTime() > now)
@@ -934,12 +935,12 @@ function ConfirmResetDialog({ busy, onConfirm, onCancel }: { busy: boolean; onCo
   )
 }
 
-function ConfirmDeleteDialog({ busy, adminView = false, onConfirm, onCancel }: { busy: boolean; adminView?: boolean; onConfirm: () => void; onCancel: () => void }) {
+function ConfirmDeleteDialog({ busy, adminView = false, revoked = false, onConfirm, onCancel }: { busy: boolean; adminView?: boolean; revoked?: boolean; onConfirm: () => void; onCancel: () => void }) {
   return (
     <Modal onClose={onCancel} labelledBy="confirm-delete-title">
       <div className="confirm-body">
         <div className="confirm-icon" aria-hidden="true"><Trash2 size={22} /></div>
-        <h2 id="confirm-delete-title">Delete expired key?</h2>
+        <h2 id="confirm-delete-title">{revoked ? 'Delete revoked key?' : 'Delete expired key?'}</h2>
         <p className="muted">
           {adminView
             ? 'This permanently removes the key from the user\'s account. This action cannot be undone.'
@@ -985,7 +986,7 @@ function KeyRows({ profile, scope = 'own' }: { profile: Profile | null; scope?: 
   async function resetDevice(keyId: string) {
     setResetting(true)
     try {
-      const { error: resetError } = await supabase!.rpc(all ? 'admin_reset_key_device' : 'reset_my_key_device', { p_key_id: keyId })
+      const { error: resetError } = await supabase!.rpc(all ? 'owner_reset_key_device' : 'reset_my_key_device', { p_key_id: keyId })
       if (resetError) {
         setToast({
           kind: 'error',
@@ -1008,12 +1009,12 @@ function KeyRows({ profile, scope = 'own' }: { profile: Profile | null; scope?: 
   async function deleteKey(keyId: string) {
     setDeleting(true)
     try {
-      const { error: deleteError } = await supabase!.rpc(all ? 'admin_delete_expired_key' : 'delete_expired_key', { p_key_id: keyId })
+      const { error: deleteError } = await supabase!.rpc(all ? 'owner_delete_expired_key' : 'delete_expired_key', { p_key_id: keyId })
       if (deleteError) {
         setToast({
           kind: 'error',
           text: deleteError.message.includes('key_unavailable')
-            ? 'Only expired keys can be deleted.'
+            ? 'This key cannot be deleted in its current state.'
             : 'Could not delete the key. Please try again.',
         })
       } else {
@@ -1086,8 +1087,12 @@ function KeyRows({ profile, scope = 'own' }: { profile: Profile | null; scope?: 
             const isExpired = Boolean(row.expires_at && new Date(row.expires_at).getTime() <= now)
             const remaining = !isLifetime && row.expires_at && !isExpired ? formatRemaining(row.expires_at, now) : null
             const urgent = Boolean(row.expires_at && new Date(row.expires_at).getTime() - now < 86400000 && !isExpired)
-            const canReset = (all ? profile?.role === 'admin' : profile?.role === 'user') && row.status === 'redeemed' && !isExpired
-            const canDelete = (all ? profile?.role === 'admin' : profile?.role === 'user') && (row.status === 'redeemed' || row.status === 'expired') && isExpired
+            const isOwner = profile?.role === 'owner'
+            const canReset = (all ? isOwner : isOwner || profile?.role === 'user') && row.status === 'redeemed' && !isExpired
+            const expiredDeletable = (row.status === 'redeemed' || row.status === 'expired') && isExpired
+            const canDelete = all
+              ? isOwner && expiredDeletable
+              : (isOwner && (row.status === 'revoked' || expiredDeletable)) || (profile?.role === 'user' && expiredDeletable)
 
             return (
               <motion.article
@@ -1206,7 +1211,7 @@ function KeyRows({ profile, scope = 'own' }: { profile: Profile | null; scope?: 
                       whileTap={{ scale: 0.97 }}
                       className="secondary-button reset-dev-btn"
                       onClick={() => setConfirmDeleteId(row.id)}
-                      title="Permanently remove this expired key from your account"
+                      title="Permanently remove this key from your account"
                     >
                       <Trash2 size={14} />
                       Delete
@@ -1253,6 +1258,7 @@ function KeyRows({ profile, scope = 'own' }: { profile: Profile | null; scope?: 
             key="confirm-delete"
             busy={deleting}
             adminView={all}
+            revoked={deleteRow.status === 'revoked'}
             onCancel={() => { if (!deleting) setConfirmDeleteId(null) }}
             onConfirm={() => void deleteKey(deleteRow.id)}
           />
@@ -1345,12 +1351,12 @@ function LoaderCard({ loader, index }: { loader: (typeof LOADERS)[number]; index
 }
 
 function Dashboard({ profile }: { profile: Profile | null }) {
-  const ownKeys = useKeys(profile, profile?.role !== 'admin')
-  const allKeys = useAllKeys(profile?.role === 'admin')
-  const { data: keys, isLoading, error, refetch } = profile?.role === 'admin' ? allKeys : ownKeys
+  const ownKeys = useKeys(profile, profile?.role !== 'owner')
+  const allKeys = useAllKeys(profile?.role === 'owner')
+  const { data: keys, isLoading, error, refetch } = profile?.role === 'owner' ? allKeys : ownKeys
   const now = useNow()
   const name = profile?.discord_username || profile?.username
-  const isStaff = profile?.role === 'developer' || profile?.role === 'admin'
+  const isStaff = profile?.role === 'admin' || profile?.role === 'owner'
   const activeKey = keys?.find(isKeyActive)
 
   return (
@@ -1419,7 +1425,7 @@ function Dashboard({ profile }: { profile: Profile | null }) {
           <div className="license-main">
             <p className="overline">NO ACTIVE LICENSE</p>
             <h2>Redeem a key to start using scripts</h2>
-            <p className="muted">Keys are issued by Banana Hub developers and official vendors.</p>
+            <p className="muted">Keys are issued by Banana Hub admins and official vendors.</p>
           </div>
           <Link className="primary-button" to="/redeem">
             Redeem a key
@@ -1533,7 +1539,7 @@ function Redeem({ profile }: { profile: Profile }) {
   const { data: keys, isLoading } = useKeys(profile)
   const now = useNow()
   const activeKey = keys?.find(isKeyActive) ?? null
-  const locked = Boolean(activeKey) && !redeemed
+  const locked = Boolean(activeKey) && !redeemed && profile.role === 'user'
 
   async function redeem(e: FormEvent) {
     e.preventDefault()
@@ -1583,7 +1589,7 @@ function Redeem({ profile }: { profile: Profile }) {
 
   return (
     <>
-      <PageTitle kicker="REDEMPTION" title="Redeem Access Key" detail="Enter a key provided by a developer or official vendor." />
+      <PageTitle kicker="REDEMPTION" title="Redeem Access Key" detail="Enter a key provided by an admin or official vendor." />
 
       {locked && activeKey ? (
         <motion.div
@@ -1936,15 +1942,15 @@ function AdminSettings() {
   })
   return (
     <>
-      <PageTitle kicker="ACCESS CONTROL" title="Admin configuration" detail="Admin IDs are configured privately in Supabase, never in browser environment variables." />
+      <PageTitle kicker="ACCESS CONTROL" title="Owner configuration" detail="Owner IDs are configured privately in Supabase, never in browser environment variables." />
       <section className="settings-block">
-        <h2>Discord admin IDs</h2>
+        <h2>Discord owner IDs</h2>
         {isLoading ? (
-          <div className="state-box"><div className="loading-spinner" /><p className="state">Loading admin list…</p></div>
+          <div className="state-box"><div className="loading-spinner" /><p className="state">Loading owner list…</p></div>
         ) : error ? (
           <div className="state-box error">
             <ShieldAlert />
-            <p className="state error">Could not load the admin list.</p>
+            <p className="state error">Could not load the owner list.</p>
             <button className="secondary-button" onClick={() => void refetch()}><RotateCcw size={14} /> Retry</button>
           </div>
         ) : data?.length ? (
@@ -1957,7 +1963,7 @@ function AdminSettings() {
             ))}
           </ul>
         ) : (
-          <p className="state">No admin IDs configured yet. Add the first one through the Supabase SQL Editor.</p>
+          <p className="state">No owner IDs configured yet. Add the first one through the Supabase SQL Editor.</p>
         )}
         <p className="muted">Manage IDs using Supabase SQL Editor. Changes apply at next Discord sign-in.</p>
       </section>
