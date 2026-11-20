@@ -23,6 +23,7 @@ import {
   MonitorSmartphone,
   Moon,
   RotateCcw,
+  ScrollText,
   Settings as SettingsIcon,
   Shield,
   ShieldAlert,
@@ -32,6 +33,7 @@ import {
   TerminalSquare,
   TicketCheck,
   Trash2,
+  UserRound,
   X,
 } from 'lucide-react'
 import { supabase } from './lib/supabase'
@@ -39,7 +41,7 @@ import bananaLogo from './Public/Bananalogo.png'
 
 type Theme = 'dark' | 'light'
 type Profile = { username: string; discord_username: string | null; role: 'user' | 'developer' | 'admin'; discord_id: string | null; preferred_theme: Theme }
-type KeyRow = { id: string; duration: string; status: string; created_at: string; redeemed_at: string | null; expires_at: string | null; key_prefix: string; assigned_to: string | null; device_bound_at: string | null }
+type KeyRow = { id: string; duration: string; status: string; created_at: string; redeemed_at: string | null; expires_at: string | null; key_prefix: string; assigned_to: string | null; device_bound_at: string | null; owner?: { username: string } | null }
 type Toast = { kind: 'success' | 'error'; text: string }
 
 /* Motion language: springs for spatial changes (sidebar, modals, indicators),
@@ -241,6 +243,7 @@ export default function App() {
     : location.pathname === '/get-key' ? 'GET KEY'
     : location.pathname === '/settings' ? 'SETTINGS'
     : location.pathname === '/admin' ? 'ADMIN'
+    : location.pathname === '/log-key' ? 'LOG KEY'
     : 'DASHBOARD'
 
   return (
@@ -289,7 +292,10 @@ export default function App() {
 
                   <div className="sidebar-bottom" onClick={() => { if (isMobile) setMobileOpen(false) }}>
                     {profile?.role === 'admin' && (
-                      <NavLink to="/admin" icon={<ShieldCheck />} label="Admin" collapsed={!isMobile && sidebarCollapsed} />
+                      <>
+                        <NavLink to="/log-key" icon={<ScrollText />} label="Log Key" collapsed={!isMobile && sidebarCollapsed} />
+                        <NavLink to="/admin" icon={<ShieldCheck />} label="Admin" collapsed={!isMobile && sidebarCollapsed} />
+                      </>
                     )}
                     <a
                       className={`nav-item ${!isMobile && sidebarCollapsed ? 'collapsed' : ''}`}
@@ -409,6 +415,10 @@ export default function App() {
                           <Route
                             path="/admin"
                             element={profile?.role === 'admin' ? <AdminSettings /> : <Navigate to="/" replace />}
+                          />
+                          <Route
+                            path="/log-key"
+                            element={profile?.role === 'admin' ? <LogKey profile={profile} /> : <Navigate to="/" replace />}
                           />
                           <Route path="*" element={<Navigate to="/" replace />} />
                         </Routes>
@@ -652,26 +662,43 @@ function PageTitle({ kicker, title, detail }: { kicker: string; title: string; d
   )
 }
 
-function useKeys(profile: Profile | null) {
+function useKeys(profile: Profile | null, enabled = true) {
   return useQuery({
     queryKey: ['keys', profile?.role],
-    enabled: !!profile && !!supabase,
+    enabled: enabled && !!profile && !!supabase,
     refetchInterval: 8000,
     queryFn: async (): Promise<KeyRow[]> => {
-      const column = profile?.role === 'user' ? 'assigned_to' : 'generated_by'
+      const column = profile?.role === 'developer' ? 'generated_by' : 'assigned_to'
       const { data: user } = await supabase!.auth.getUser()
       if (!user.user) throw new Error('Session expired')
-      let query = supabase!
+      const { data, error } = await supabase!
         .from('keys')
         .select('id,duration,status,created_at,redeemed_at,expires_at,key_prefix,assigned_to,device_bound_at')
+        .eq(column, user.user.id)
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
         .limit(50)
-      if (profile?.role === 'admin') query = query.or(`generated_by.eq.${user.user.id},assigned_to.eq.${user.user.id}`)
-      else query = query.eq(column, user.user.id)
-      const { data, error } = await query
       if (error) throw error
       return data as KeyRow[]
+    },
+  })
+}
+
+function useAllKeys(enabled: boolean) {
+  return useQuery({
+    queryKey: ['keys', 'all'],
+    enabled: enabled && !!supabase,
+    refetchInterval: 8000,
+    queryFn: async (): Promise<KeyRow[]> => {
+      const { data, error } = await supabase!
+        .from('keys')
+        .select('id,duration,status,created_at,redeemed_at,expires_at,key_prefix,assigned_to,device_bound_at,owner:profiles!assigned_to(username)')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(200)
+      if (error) throw error
+      const rows = data as unknown as (Omit<KeyRow, 'owner'> & { owner: { username: string } | { username: string }[] | null })[]
+      return rows.map(({ owner, ...rest }) => ({ ...rest, owner: Array.isArray(owner) ? owner[0] ?? null : owner }))
     },
   })
 }
@@ -770,9 +797,10 @@ function DeviceBadge({ bound }: { bound: boolean }) {
   )
 }
 
-function KeyDetailModal({ row, profile, now, onClose, onReset, onCopied }: {
+function KeyDetailModal({ row, profile, adminView = false, now, onClose, onReset, onCopied }: {
   row: KeyRow
   profile: Profile | null
+  adminView?: boolean
   now: number
   onClose: () => void
   onReset: () => void
@@ -781,7 +809,7 @@ function KeyDetailModal({ row, profile, now, onClose, onReset, onCopied }: {
   const isBound = Boolean(row.device_bound_at)
   const isLifetime = row.duration === 'lifetime' || !row.expires_at
   const isExpired = Boolean(row.expires_at && new Date(row.expires_at).getTime() <= now)
-  const canReset = profile?.role === 'user' && row.status === 'redeemed' && !isExpired
+  const canReset = (adminView ? profile?.role === 'admin' : profile?.role === 'user') && row.status === 'redeemed' && !isExpired
   const savedKey = localStorage.getItem(`banana-redeemed-key:${row.id}`) || ''
   const remaining = !isLifetime && row.expires_at ? formatRemaining(row.expires_at, now) : null
   const urgent = Boolean(row.expires_at && new Date(row.expires_at).getTime() - now < 86400000 && new Date(row.expires_at).getTime() > now)
@@ -805,6 +833,12 @@ function KeyDetailModal({ row, profile, now, onClose, onReset, onCopied }: {
           <dt><ShieldCheck size={14} aria-hidden="true" /> Status</dt>
           <dd><span className={`status-pill ${isExpired ? 'expired' : row.status}`}>{isExpired ? 'expired' : row.status}</span></dd>
         </div>
+        {row.owner && (
+          <div>
+            <dt><UserRound size={14} aria-hidden="true" /> Owner</dt>
+            <dd>{row.owner.username}</dd>
+          </div>
+        )}
         <div>
           <dt><Clock size={14} aria-hidden="true" /> Duration</dt>
           <dd>{formatDuration(row.duration)}</dd>
@@ -900,14 +934,16 @@ function ConfirmResetDialog({ busy, onConfirm, onCancel }: { busy: boolean; onCo
   )
 }
 
-function ConfirmDeleteDialog({ busy, onConfirm, onCancel }: { busy: boolean; onConfirm: () => void; onCancel: () => void }) {
+function ConfirmDeleteDialog({ busy, adminView = false, onConfirm, onCancel }: { busy: boolean; adminView?: boolean; onConfirm: () => void; onCancel: () => void }) {
   return (
     <Modal onClose={onCancel} labelledBy="confirm-delete-title">
       <div className="confirm-body">
         <div className="confirm-icon" aria-hidden="true"><Trash2 size={22} /></div>
         <h2 id="confirm-delete-title">Delete expired key?</h2>
         <p className="muted">
-          This permanently removes the key from your account. This action cannot be undone.
+          {adminView
+            ? 'This permanently removes the key from the user\'s account. This action cannot be undone.'
+            : 'This permanently removes the key from your account. This action cannot be undone.'}
         </p>
         <div className="confirm-actions">
           <button className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
@@ -927,8 +963,11 @@ function ConfirmDeleteDialog({ busy, onConfirm, onCancel }: { busy: boolean; onC
   )
 }
 
-function KeyRows({ profile }: { profile: Profile | null }) {
-  const { data, isLoading, error, refetch } = useKeys(profile)
+function KeyRows({ profile, scope = 'own' }: { profile: Profile | null; scope?: 'own' | 'all' }) {
+  const all = scope === 'all'
+  const ownKeys = useKeys(profile, !all)
+  const allKeys = useAllKeys(all)
+  const { data, isLoading, error, refetch } = all ? allKeys : ownKeys
   const queryClient = useQueryClient()
   const [detailId, setDetailId] = useState<string | null>(null)
   const [confirmResetId, setConfirmResetId] = useState<string | null>(null)
@@ -946,7 +985,7 @@ function KeyRows({ profile }: { profile: Profile | null }) {
   async function resetDevice(keyId: string) {
     setResetting(true)
     try {
-      const { error: resetError } = await supabase!.rpc('reset_my_key_device', { p_key_id: keyId })
+      const { error: resetError } = await supabase!.rpc(all ? 'admin_reset_key_device' : 'reset_my_key_device', { p_key_id: keyId })
       if (resetError) {
         setToast({
           kind: 'error',
@@ -957,7 +996,7 @@ function KeyRows({ profile }: { profile: Profile | null }) {
       } else {
         setToast({ kind: 'success', text: 'Device binding cleared. The next executor will bind a new device.' })
         setConfirmResetId(null)
-        await queryClient.invalidateQueries({ queryKey: ['keys', profile?.role] })
+        await queryClient.invalidateQueries({ queryKey: ['keys', all ? 'all' : profile?.role] })
       }
     } catch {
       setToast({ kind: 'error', text: 'Connection error while resetting the device.' })
@@ -969,7 +1008,7 @@ function KeyRows({ profile }: { profile: Profile | null }) {
   async function deleteKey(keyId: string) {
     setDeleting(true)
     try {
-      const { error: deleteError } = await supabase!.rpc('delete_expired_key', { p_key_id: keyId })
+      const { error: deleteError } = await supabase!.rpc(all ? 'admin_delete_expired_key' : 'delete_expired_key', { p_key_id: keyId })
       if (deleteError) {
         setToast({
           kind: 'error',
@@ -982,7 +1021,7 @@ function KeyRows({ profile }: { profile: Profile | null }) {
         setToast({ kind: 'success', text: 'Expired key deleted.' })
         setConfirmDeleteId(null)
         if (detailId === keyId) setDetailId(null)
-        await queryClient.invalidateQueries({ queryKey: ['keys', profile?.role] })
+        await queryClient.invalidateQueries({ queryKey: ['keys', all ? 'all' : profile?.role] })
       }
     } catch {
       setToast({ kind: 'error', text: 'Connection error while deleting the key.' })
@@ -995,7 +1034,7 @@ function KeyRows({ profile }: { profile: Profile | null }) {
     return (
       <div className="state-box">
         <div className="loading-spinner" />
-        <p className="state">Loading your keys and device links…</p>
+        <p className="state">{all ? 'Loading all user keys…' : 'Loading your keys and device links…'}</p>
       </div>
     )
   }
@@ -1024,11 +1063,13 @@ function KeyRows({ profile }: { profile: Profile | null }) {
         <KeyRound />
         <p>No keys found</p>
         <span>
-          {profile?.role === 'user'
+          {all
+            ? 'Every key issued to any user appears here with its owner and device link.'
+            : profile?.role === 'user'
             ? 'Redeem a valid access key to see it here with its expiry and device link.'
             : 'Generate a key from the Get Key page to see it listed here.'}
         </span>
-        {profile?.role === 'user'
+        {!all && profile?.role === 'user'
           ? <Link className="primary-button empty-action" to="/redeem">Redeem a key <ArrowRight size={15} /></Link>
           : <Link className="primary-button empty-action" to="/get-key">Generate a key <ArrowRight size={15} /></Link>}
       </motion.div>
@@ -1045,8 +1086,8 @@ function KeyRows({ profile }: { profile: Profile | null }) {
             const isExpired = Boolean(row.expires_at && new Date(row.expires_at).getTime() <= now)
             const remaining = !isLifetime && row.expires_at && !isExpired ? formatRemaining(row.expires_at, now) : null
             const urgent = Boolean(row.expires_at && new Date(row.expires_at).getTime() - now < 86400000 && !isExpired)
-            const canReset = profile?.role === 'user' && row.status === 'redeemed' && !isExpired
-            const canDelete = profile?.role === 'user' && row.status !== 'revoked' && isExpired
+            const canReset = (all ? profile?.role === 'admin' : profile?.role === 'user') && row.status === 'redeemed' && !isExpired
+            const canDelete = (all ? profile?.role === 'admin' : profile?.role === 'user') && (row.status === 'redeemed' || row.status === 'expired') && isExpired
 
             return (
               <motion.article
@@ -1073,6 +1114,16 @@ function KeyRows({ profile }: { profile: Profile | null }) {
                 </div>
 
                 <div className="key-details-table">
+                  {all && (
+                    <div className="detail-item">
+                      <span className="detail-label">
+                        <UserRound size={13} aria-hidden="true" />
+                        Owner
+                      </span>
+                      <span className="detail-value">{row.owner?.username ?? 'Unassigned'}</span>
+                    </div>
+                  )}
+
                   <div className="detail-item">
                     <span className="detail-label">
                       <HardDrive size={13} aria-hidden="true" />
@@ -1174,6 +1225,7 @@ function KeyRows({ profile }: { profile: Profile | null }) {
             key="key-detail"
             row={detailRow}
             profile={profile}
+            adminView={all}
             now={now}
             onClose={() => setDetailId(null)}
             onReset={() => setConfirmResetId(detailRow.id)}
@@ -1200,6 +1252,7 @@ function KeyRows({ profile }: { profile: Profile | null }) {
           <ConfirmDeleteDialog
             key="confirm-delete"
             busy={deleting}
+            adminView={all}
             onCancel={() => { if (!deleting) setConfirmDeleteId(null) }}
             onConfirm={() => void deleteKey(deleteRow.id)}
           />
@@ -1292,7 +1345,9 @@ function LoaderCard({ loader, index }: { loader: (typeof LOADERS)[number]; index
 }
 
 function Dashboard({ profile }: { profile: Profile | null }) {
-  const { data: keys, isLoading, error, refetch } = useKeys(profile)
+  const ownKeys = useKeys(profile, profile?.role !== 'admin')
+  const allKeys = useAllKeys(profile?.role === 'admin')
+  const { data: keys, isLoading, error, refetch } = profile?.role === 'admin' ? allKeys : ownKeys
   const now = useNow()
   const name = profile?.discord_username || profile?.username
   const isStaff = profile?.role === 'developer' || profile?.role === 'admin'
@@ -1449,6 +1504,21 @@ function Keys({ profile }: { profile: Profile | null }) {
       />
       <section className="data-section">
         <KeyRows profile={profile} />
+      </section>
+    </>
+  )
+}
+
+function LogKey({ profile }: { profile: Profile | null }) {
+  return (
+    <>
+      <PageTitle
+        kicker="ADMIN AUDIT"
+        title="Log Key"
+        detail="Every key across all users, with owners and device links. Reset a device binding or remove an expired key."
+      />
+      <section className="data-section">
+        <KeyRows profile={profile} scope="all" />
       </section>
     </>
   )
