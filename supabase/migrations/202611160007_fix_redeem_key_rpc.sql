@@ -2,7 +2,7 @@ create or replace function public.redeem_key(p_key text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare uid uuid := auth.uid(); row_key public.keys%rowtype; clean_key text;
 begin
-  if uid is null or (select role from public.profiles where id = uid) not in ('user', 'admin') then
+ if uid is null or (select role from public.profiles where id = uid) <> 'user' then
   raise exception 'not_authorized' using errcode = '42501';
  end if;
  if exists (select 1 from public.keys where assigned_to = uid) then

@@ -2,7 +2,7 @@ create or replace function public.create_profile() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare base_name text; candidate text;
 begin
- base_name := lower(regexp_replace(coalesce(new.raw_user_meta_data->>'preferred_username', new.raw_user_meta_data->>'username', split_part(coalesce(new.email, 'account'), '@', 1)), '[^a-zA-Z0-9_.-]', '', 'g'));
+ base_name := lower(regexp_replace(coalesce(new.raw_user_meta_data->>'preferred_username', new.raw_user_meta_data->>'username', 'account'), '[^a-zA-Z0-9_.-]', '', 'g'));
  base_name := left(coalesce(nullif(base_name, ''), 'account'), 23);
  candidate := base_name || '-' || left(new.id::text, 8);
  insert into public.profiles(id, username) values(new.id, candidate) on conflict (id) do nothing;

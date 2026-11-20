@@ -5,7 +5,6 @@ begin
  if uid is null then raise exception 'not_authorized' using errcode = '42501'; end if;
  select role into user_role from public.profiles where id = uid;
  if user_role not in ('user', 'admin') then raise exception 'not_authorized' using errcode = '42501'; end if;
- if user_role = 'user' then perform pg_advisory_xact_lock(hashtextextended(uid::text, 0)); end if;
  if user_role = 'user' and exists (select 1 from public.keys where assigned_to = uid) then
   raise exception 'redeem_limit_reached';
  end if;
