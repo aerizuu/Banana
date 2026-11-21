@@ -57,10 +57,19 @@ function useTheme() {
     const saved = localStorage.getItem('banana-theme')
     return saved === 'light' ? 'light' : 'dark'
   })
+  const prevTheme = useRef(theme)
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
+    const root = document.documentElement
+    root.dataset.theme = theme
     localStorage.setItem('banana-theme', theme)
+    let timer: number | undefined
+    if (prevTheme.current !== theme) {
+      prevTheme.current = theme
+      root.classList.add('theme-fade')
+      timer = window.setTimeout(() => root.classList.remove('theme-fade'), 700)
+    }
     if (supabase) void supabase.auth.getUser().then(({ data }) => { if (data.user) void supabase!.from('profiles').update({ preferred_theme: theme }).eq('id', data.user.id).then(() => {}) })
+    return () => { if (timer !== undefined) window.clearTimeout(timer) }
   }, [theme])
   return [theme, setTheme] as const
 }
@@ -1306,6 +1315,8 @@ const SUPPORTED_GAMES: SupportedGame[] = [
   { id: 'mt-soreya', name: 'MT SOREYA', genre: 'Climb & Fish', icon: 'https://tr.rbxcdn.com/180DAY-e063649024fc42a9ff849df4d676cac8/256/256/Image/Png/noFilter', tiers: ['free', 'premium'], description: 'Climb 13 checkpoints to the summit, fish rarity tiers with mutations, and chase hourly luck events.', url: 'https://www.roblox.com/games/118517641508250/MOUNT-SOREYA' },
   { id: 'violence-district', name: 'Violence District', genre: 'Asym Horror', icon: 'https://tr.rbxcdn.com/180DAY-09da8a9c4c14139a7c5af5890a36787e/256/256/Image/Png/noFilter', tiers: ['free'], description: 'Casual asymmetrical horror: five survivors outlast one killer across the district.', url: 'https://www.roblox.com/games/93978595733734/Violence-District' },
   { id: 'throw-food', name: 'Throw Food For Animals', genre: 'Throw Simulator', icon: 'https://tr.rbxcdn.com/180DAY-eeb61048a8ee1bf008f1d14f7f501166/256/256/Image/Png/noFilter', tiers: ['free'], description: 'Throw food to attract and collect animals, earn cash, and train throw power for rarer catches.', url: 'https://www.roblox.com/games/120219252362013/Throw-Food-For-Animals' },
+  // No loader script yet: empty tiers render a COMING SOON badge, not fake support.
+  { id: 'fish-it', name: 'Fish It!', genre: 'Fishing Sim', icon: 'https://tr.rbxcdn.com/180DAY-829ef924426e90bb167e347e865c3241/256/256/Image/Png/noFilter', tiers: [], description: 'Collect from 1,000,000+ fish variations, sail the seas, and explore islands. Click to charge, click fast to reel in.', url: 'https://www.roblox.com/games/121864768012064/Fish-It' },
 ]
 
 const LOADERS = [
@@ -1483,6 +1494,7 @@ function Dashboard({ profile }: { profile: Profile | null }) {
                   <span className="game-card-genre">{game.genre}</span>
                   <p className="game-card-desc">{game.description}</p>
                   <div className="game-tiers">
+                    {game.tiers.length === 0 && <span className="tier-badge tier-soon">COMING SOON</span>}
                     {game.tiers.map(tier => (
                       <span key={tier} className={`tier-badge tier-${tier}`}>
                         {tier === 'premium' && <Crown className="tier-icon" aria-hidden="true" />}

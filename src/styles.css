@@ -20,8 +20,6 @@
   --info: #7dd3fc;
   --warn: #fb923c;
   --focus: #f0d85a;
-  --scene: url('./Public/Dark.jpg');
-  --scene-scrim: 74%;
   --r-sm: 8px;
   --r-md: 12px;
   --r-lg: 16px;
@@ -45,9 +43,6 @@
   --info: #0a3d5c;
   --warn: #5c3204;
   --focus: #4a3b0a;
-  --scene: url('./Public/Light.jpg');
-  /* 70%: worst-pixel AA over the untouched original photo (black crevice pixels). */
-  --scene-scrim: 70%;
   --shadow-pop: 0 12px 32px rgba(40, 40, 25, 0.18);
 }
 
@@ -63,19 +58,50 @@ body {
   line-height: 1.55;
 }
 
-/* Scene photo per theme, scrimmed with --bg so text on the canvas keeps AA contrast. */
-body::before {
-  content: '';
+/* Scene photo per theme, scrimmed so canvas text keeps AA contrast.
+   Real fixed divs, not body pseudo-elements: iOS Safari mis-sizes fixed
+   pseudo-layers when the URL bar collapses, leaving uncovered gaps. */
+.scene {
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background:
-    linear-gradient(
-      color-mix(in srgb, var(--bg) var(--scene-scrim), transparent),
-      color-mix(in srgb, var(--bg) var(--scene-scrim), transparent)
-    ),
-    var(--scene) center / cover no-repeat;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+.scene-dark {
+  background-image:
+    linear-gradient(rgba(23, 24, 20, 0.74), rgba(23, 24, 20, 0.74)),
+    url('./Public/Dark.jpg');
+}
+
+/* 70%: worst-pixel AA over the untouched original photo (black crevice pixels). */
+.scene-light {
+  background-image:
+    linear-gradient(rgba(244, 244, 239, 0.7), rgba(244, 244, 239, 0.7)),
+    url('./Public/Light.jpg');
+  opacity: 0;
+  transition: opacity 0.65s ease;
+}
+
+:root[data-theme='light'] .scene-light {
+  opacity: 1;
+}
+
+/* While the scene crossfades, UI colors glide too instead of snapping mid-fade. */
+.theme-fade *,
+.theme-fade *::before,
+.theme-fade *::after {
+  transition:
+    background-color 0.65s ease,
+    color 0.65s ease,
+    border-color 0.65s ease !important;
+}
+
+.theme-fade .scene {
+  transition: opacity 0.65s ease !important;
 }
 
 /* Default browser placeholder grey fails AA over the scene photo. */
@@ -1205,6 +1231,10 @@ nav {
 
 .tier-premium {
   color: var(--accent-text);
+}
+
+.tier-soon {
+  color: var(--muted);
 }
 
 .tier-icon {
