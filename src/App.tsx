@@ -1315,13 +1315,14 @@ const SUPPORTED_GAMES: SupportedGame[] = [
   { id: 'mt-soreya', name: 'MT SOREYA', genre: 'Climb & Fish', icon: 'https://tr.rbxcdn.com/180DAY-e063649024fc42a9ff849df4d676cac8/256/256/Image/Png/noFilter', tiers: ['free', 'premium'], description: 'Climb 13 checkpoints to the summit, fish rarity tiers with mutations, and chase hourly luck events.', url: 'https://www.roblox.com/games/118517641508250/MOUNT-SOREYA' },
   { id: 'violence-district', name: 'Violence District', genre: 'Asym Horror', icon: 'https://tr.rbxcdn.com/180DAY-09da8a9c4c14139a7c5af5890a36787e/256/256/Image/Png/noFilter', tiers: ['free'], description: 'Casual asymmetrical horror: five survivors outlast one killer across the district.', url: 'https://www.roblox.com/games/93978595733734/Violence-District' },
   { id: 'throw-food', name: 'Throw Food For Animals', genre: 'Throw Simulator', icon: 'https://tr.rbxcdn.com/180DAY-eeb61048a8ee1bf008f1d14f7f501166/256/256/Image/Png/noFilter', tiers: ['free'], description: 'Throw food to attract and collect animals, earn cash, and train throw power for rarer catches.', url: 'https://www.roblox.com/games/120219252362013/Throw-Food-For-Animals' },
+  { id: 'fish-it', name: 'Fish It!', genre: 'Fishing Sim', icon: 'https://tr.rbxcdn.com/180DAY-829ef924426e90bb167e347e865c3241/256/256/Image/Png/noFilter', tiers: ['premium'], description: 'Collect from 1,000,000+ fish variations, sail the seas, and explore islands. Click to charge, click fast to reel in.', url: 'https://www.roblox.com/games/121864768012064/Fish-It' },
   // No loader script yet: empty tiers render a COMING SOON badge, not fake support.
-  { id: 'fish-it', name: 'Fish It!', genre: 'Fishing Sim', icon: 'https://tr.rbxcdn.com/180DAY-829ef924426e90bb167e347e865c3241/256/256/Image/Png/noFilter', tiers: [], description: 'Collect from 1,000,000+ fish variations, sail the seas, and explore islands. Click to charge, click fast to reel in.', url: 'https://www.roblox.com/games/121864768012064/Fish-It' },
+  { id: 'anime-dice', name: 'Anime Dice', genre: 'Dice Simulator', icon: 'https://tr.rbxcdn.com/180DAY-bec2c7687b5fa555ec684cc61c89b966/256/256/Image/Png/noFilter', tiers: [], description: 'Roll dice to reveal anime characters, upgrade your luck, and build the strongest team. Cash keeps generating while you are offline.', url: 'https://www.roblox.com/games/113290951185459/Anime-Dice' },
 ]
 
 const LOADERS = [
   { tier: 'free', detail: 'Covers Violence District and Throw Food For Animals.', code: 'loadstring(game:HttpGet("https://raw.githubusercontent.com/aerizuu/BananaHUB/refs/heads/main/BananaLoaderFree.lua"))()' },
-  { tier: 'premium', detail: 'Covers DDS, MT SOREYA, and both free games.', code: 'loadstring(game:HttpGet("https://raw.githubusercontent.com/aerizuu/BananaHUB/refs/heads/main/BananaLoaderPrem.lua"))()' },
+  { tier: 'premium', detail: 'Covers DDS, MT SOREYA, Fish It!, and both free games.', code: 'loadstring(game:HttpGet("https://raw.githubusercontent.com/aerizuu/BananaHUB/refs/heads/main/BananaLoaderPrem.lua"))()' },
 ] as const
 
 function LoaderCard({ loader, index }: { loader: (typeof LOADERS)[number]; index: number }) {
