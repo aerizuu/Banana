@@ -1722,6 +1722,10 @@ nav {
   font-size: 13px;
 }
 
+.admin-add-form {
+  margin-top: 18px;
+}
+
 /* ============ Login ============ */
 .login-page {
   min-height: 100dvh;

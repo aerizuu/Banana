@@ -1312,7 +1312,7 @@ type SupportedGame = {
 // thumbnails.roblox.com lookup if the list ever outlives them.
 const SUPPORTED_GAMES: SupportedGame[] = [
   { id: 'dds', name: 'DDS', genre: 'Drag Racing RP', icon: 'https://tr.rbxcdn.com/180DAY-739e5f98daa0d50c8a331c5ba7678b58/256/256/Image/Png/noFilter', tiers: ['premium'], description: 'Drag Drive Simulator: realistic driving, drag runs, and street roleplay with your crew.', url: 'https://www.roblox.com/games/131378148336503/Drag-Drive-Simulator' },
-  { id: 'mt-soreya', name: 'MT SOREYA', genre: 'Climb & Fish', icon: 'https://tr.rbxcdn.com/180DAY-e063649024fc42a9ff849df4d676cac8/256/256/Image/Png/noFilter', tiers: ['free', 'premium'], description: 'Climb 13 checkpoints to the summit, fish rarity tiers with mutations, and chase hourly luck events.', url: 'https://www.roblox.com/games/118517641508250/MOUNT-SOREYA' },
+  { id: 'mt-soreya', name: 'MT SOREYA', genre: 'Climb & Fish', icon: 'https://tr.rbxcdn.com/180DAY-e063649024fc42a9ff849df4d676cac8/256/256/Image/Png/noFilter', tiers: ['free', 'premium'], description: 'Climb 20 checkpoints to the summit, fish rarity tiers with mutations, and chase hourly luck events.', url: 'https://www.roblox.com/games/118517641508250/MOUNT-SOREYA' },
   { id: 'violence-district', name: 'Violence District', genre: 'Asym Horror', icon: 'https://tr.rbxcdn.com/180DAY-09da8a9c4c14139a7c5af5890a36787e/256/256/Image/Png/noFilter', tiers: ['free'], description: 'Casual asymmetrical horror: five survivors outlast one killer across the district.', url: 'https://www.roblox.com/games/93978595733734/Violence-District' },
   { id: 'throw-food', name: 'Throw Food For Animals', genre: 'Throw Simulator', icon: 'https://tr.rbxcdn.com/180DAY-eeb61048a8ee1bf008f1d14f7f501166/256/256/Image/Png/noFilter', tiers: ['free'], description: 'Throw food to attract and collect animals, earn cash, and train throw power for rarer catches.', url: 'https://www.roblox.com/games/120219252362013/Throw-Food-For-Animals' },
   { id: 'fish-it', name: 'Fish It!', genre: 'Fishing Sim', icon: 'https://tr.rbxcdn.com/180DAY-829ef924426e90bb167e347e865c3241/256/256/Image/Png/noFilter', tiers: ['premium'], description: 'Collect from 1,000,000+ fish variations, sail the seas, and explore islands. Click to charge, click fast to reel in.', url: 'https://www.roblox.com/games/121864768012064/Fish-It' },
@@ -1953,6 +1953,39 @@ function AdminSettings() {
       return (data as { discord_id: string }[]).map(row => row.discord_id)
     },
   })
+  const [newId, setNewId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+
+  async function addId(event: FormEvent) {
+    event.preventDefault()
+    const clean = newId.trim()
+    if (!/^[0-9]{15,22}$/.test(clean)) {
+      setMessage({ kind: 'error', text: 'Discord IDs are digits only. Enable Developer Mode in Discord, then right-click the user and Copy User ID.' })
+      return
+    }
+    setBusy(true)
+    setMessage(null)
+    try {
+      const { error: rpcError } = await supabase!.rpc('add_discord_allowlist', { p_discord_id: clean })
+      if (rpcError) {
+        const text = rpcError.message.includes('already_listed') ? 'That Discord ID is already on the list.'
+          : rpcError.message.includes('not_authorized') ? 'Only the owner can add IDs.'
+          : rpcError.message.includes('invalid_id') ? 'Discord IDs are digits only, 15 to 22 characters.'
+          : 'Could not add the ID. Please try again.'
+        setMessage({ kind: 'error', text })
+      } else {
+        setMessage({ kind: 'success', text: `Added ${clean}. Owner access applies at their next Discord sign-in.` })
+        setNewId('')
+        await refetch()
+      }
+    } catch {
+      setMessage({ kind: 'error', text: 'Could not reach the service. Check your connection.' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <>
       <PageTitle kicker="ACCESS CONTROL" title="Owner configuration" detail="Owner IDs are configured privately in Supabase, never in browser environment variables." />
@@ -1976,9 +2009,43 @@ function AdminSettings() {
             ))}
           </ul>
         ) : (
-          <p className="state">No owner IDs configured yet. Add the first one through the Supabase SQL Editor.</p>
+          <p className="state">No owner IDs configured yet. Add the first one below.</p>
         )}
-        <p className="muted">Manage IDs using Supabase SQL Editor. Changes apply at next Discord sign-in.</p>
+        <form className="action-form admin-add-form" onSubmit={addId}>
+          <label htmlFor="add-discord-id">Add Discord ID</label>
+          <input
+            id="add-discord-id"
+            required
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="Paste the numeric Discord ID"
+            value={newId}
+            onChange={e => setNewId(e.target.value)}
+          />
+          <AnimatePresence>
+            {message && (
+              <motion.p
+                role={message.kind === 'error' ? 'alert' : 'status'}
+                className={`state inline ${message.kind}`}
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+              >
+                {message.text}
+              </motion.p>
+            )}
+          </AnimatePresence>
+          <motion.button
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
+            className="primary-button"
+            disabled={busy}
+          >
+            {busy ? 'Adding…' : 'Add ID'}
+          </motion.button>
+        </form>
+        <p className="muted">New IDs take effect at the next Discord sign-in.</p>
       </section>
     </>
   )
